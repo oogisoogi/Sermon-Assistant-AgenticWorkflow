@@ -573,7 +573,7 @@ Step N 영어 산출물 완성
 
 #### 용어 사전 (Terminology Glossary)
 
-`translations/glossary.yaml`은 번역 에이전트의 **지속적 외부 메모리**이다 (RLM 패턴).
+`translations/glossary.yaml`은 번역 에이전트의 **지속적 외부 메모리**이다 (RLM 패턴). `memory: project`(ADR-051)와 함께 2계층 메모리를 구성한다: glossary.yaml = 명시적 용어 매핑, persistent memory = 암시적 문체·어투 패턴 축적.
 
 ```yaml
 # translations/glossary.yaml
@@ -587,7 +587,7 @@ terms:
 - glossary는 **SOT가 아님** — 번역 에이전트의 로컬 작업 파일
 - Orchestrator가 관리하지 않음 — 번역 에이전트가 자체 관리
 - 동시 쓰기 위험 없음 — 번역은 순차 실행 (각 단계 완료 후 1회)
-- 계층적 메모리: Local Memory 계층 (per-agent 작업 맥락)
+- 계층적 메모리: glossary.yaml(명시적 용어 사전) + `memory: project`(암시적 경험 축적) 2계층 (ADR-051)
 
 #### SOT 기록 규칙
 

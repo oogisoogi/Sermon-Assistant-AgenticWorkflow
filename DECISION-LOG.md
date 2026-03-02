@@ -350,6 +350,32 @@
 - **대안**: (a) SOT에 진단 상태 추가 → 기각 (SOT 스키마 복잡성 증가, 절대 기준 2 부담), (b) 재시도 횟수만 증가 → 기각 (근본 원인 미분석, 동일 실패 반복), (c) 별도 진단 에이전트 → 기각 (과도한 복잡성, 오케스트레이터 내 진단으로 충분)
 - **관련 커밋**: (pending)
 
+### ADR-051: Claude Code v2.1 신기능 연구 — 기존 설계 타당성 검증 + 선별적 채택
+
+- **날짜**: 2026-03-02
+- **상태**: Accepted
+- **맥락**: YouTube 영상 "쏟아지는 클로드코드 업데이트" (개발동생) 및 claudefa.st 기술 문서에서 Claude Code v2.1 신기능 5가지(Ralph Loop, Remote Control, Auto-memory, `/simplify` 3-agent 병렬 리뷰, `/batch` 병렬 단계 실행)를 조사. 3차에 걸친 심층 성찰(CCP Step 2 파급 효과 분석 + 절대 기준 1 품질 검증 + 필요성 재검토)을 수행하여 채택/보류/기각을 판정.
+- **결정**:
+  1. **3-Lens 병렬 리뷰 — 보류**: `/simplify`의 3-agent 병렬 패턴을 L2 리뷰에 적용하는 안. 기존 `@reviewer` 프로토콜(7단계 + 5렌즈 + Pre-mortem + 최소 1 이슈 + 독립 pACS)이 이미 체계적이며, 3-Lens가 해결하는 실증된 품질 문제가 미확인. pACS 3차원과 3-Lens 전문화의 구조적 비정합(결함 1), 교차 영역 결함 탐지 공백(결함 2), 합성 단계 P1 공백(결함 3) 식별. `@reviewer`가 특정 유형의 결함을 체계적으로 놓치는 사례가 축적될 때 재검토.
+  2. **Batch Autopilot — 기각**: `/batch`의 병렬 단계 실행 패턴. 독립 단계의 병렬 실행은 순차 실행과 산출물 품질이 **동일** (품질 이점 없음). `current_step` 단일 정수가 8+ 파일의 내력벽이며, 변경 시 아키텍처 변경에 해당 (기능 개선 조건 위반). 기존 `(team)` 메커니즘이 품질 기반 병렬화를 이미 지원.
+  3. **Sub-agent Persistent Memory — @translator만 채택**: `@translator`에 `memory: project` 추가. glossary.yaml 이외의 문체 판단 축적 가능. `@reviewer`(과거 편향 위험)와 `@fact-checker`(정보 시효 문제 + 독립 검증 원칙 충돌)에는 추가하지 않음. RLM 패턴의 자연스러운 확장.
+  4. **Self-Optimization Command — 기각**: 워크플로우 구조 최적화는 workflow-generator 스킬의 책임. 사후 분석 도구가 아닌 generator 자체 개선이 올바른 접근.
+- **핵심 발견 — 기존 설계 타당성 검증**:
+  - `/simplify` 3-agent → 기존 4계층 품질 게이트(L0→L1→L1.5→L2)가 이미 대응
+  - `/batch` 병렬 → 기존 `(team)` 메커니즘이 이미 대응
+  - Auto-memory → 기존 RLM 패턴(glossary.yaml, Knowledge Archive, knowledge-index.jsonl)이 이미 대응
+  - Ralph Loop → 기존 retry budget + Abductive Diagnosis가 더 세밀
+  - Agent Teams → 기존 `(team)` 단계 + SOT 단일 쓰기가 **동일 패턴**
+- **근거**:
+  - **절대 기준 1(품질)**: 모든 제안을 "품질 이점이 실증되었는가?"로 판정. 기술의 매력이 아닌 문제의 존재가 채택 기준.
+  - **기존 보존**: "기능 개선이지, 새 워크플로우를 만드는 것이 아니다" 조건 엄격 적용. `current_step` 내력벽 파괴는 아키텍처 변경에 해당하므로 기각.
+  - **RLM 패턴 보존**: `@translator`의 `memory: project`는 RLM 외부 메모리 객체의 확장. glossary.yaml과 상호보완.
+- **대안**:
+  - 3-Lens를 3개 신규 에이전트 .md로 구현 → 기각 (기존 `@reviewer`를 다른 프롬프트로 3회 호출하면 동일 효과, 신규 파일 불필요)
+  - Batch를 `(team)` 메타 단계로 구현 → 기각 (개별 단계 품질 게이트 손실)
+  - 3개 에이전트 모두에 persistent memory → 기각 (@reviewer: 과거 편향, @fact-checker: 정보 시효 + 독립성 훼손)
+- **관련 파일**: `translator.md` (`memory: project` 추가)
+
 ---
 
 ## 6. Language & Translation (언어 및 번역)
@@ -749,6 +775,7 @@
 | 2026-02-20 | (pending) | ADR-038: DNA Inheritance — 부모 게놈의 구조적 유전 |
 | 2026-02-20 | (pending) | ADR-039: Workflow.md P1 Validation — DNA 유전의 코드 수준 검증 |
 | 2026-03-02 | (pending) | ADR-050: Security Hardening — 4계층 방어 체계 + claude-forge 보안 인사이트 |
+| 2026-03-02 | accepted | ADR-051: Claude Code v2.1 신기능 연구 — 기존 설계 타당성 검증 + @translator memory: project 채택 |
 | 2026-02-20 | (pending) | ADR-040: 종합 감사 III — 4계층 QA 집행력 강화 (C1r/C2/W4/C4s/W7) |
 | 2026-02-23 | (pending) | ADR-041: 코딩 기준점 (Coding Anchor Points, CAP-1~4) |
 | 2026-02-23 | (pending) | ADR-042: Hook 설정 Global → Project 통합 |
