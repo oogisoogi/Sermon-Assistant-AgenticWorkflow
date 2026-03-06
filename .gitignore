@@ -20,3 +20,9 @@ translations/*
 
 # Setup Hook logs — runtime diagnostics (regenerated on each run)
 .claude/hooks/*.log
+
+# Runtime artifacts generated inside scripts directory
+.claude/hooks/scripts/.claude/
+
+# Pytest cache
+.pytest_cache/
