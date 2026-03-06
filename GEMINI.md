@@ -85,7 +85,7 @@ Gemini CLI에는 Claude Code의 자동 Hook 기반 컨텍스트 보존 시스템
 
 - **프레임워크 문서·사용자 대화**: 한국어
 - **워크플로우 실행**: 영어 (AI 성능 극대화 — 절대 기준 1 근거). 상세: AGENTS.md §5.2
-- **최종 산출물**: 영어 원본 + 한국어 번역 쌍 (`@translator` 서브에이전트)
+- **최종 산출물**: 영어 원본 + 한국어 번역 쌍 (`@translator` / `@sermon-translator` 서브에이전트)
 - **기술 용어**: 영어 유지 (SOT, Agent, Orchestrator, Hooks 등)
 - **시각화**: Mermaid 다이어그램 선호
 - **깊이**: 간략 요약보다 포괄적·데이터 기반 서술 선호

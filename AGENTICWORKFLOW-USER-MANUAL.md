@@ -67,6 +67,8 @@ Claude Code가 실행되면 `CLAUDE.md`를 자동으로 읽고, 프로젝트의 
 > **DNA 유전**: workflow-generator가 워크플로우를 생성할 때, 부모(AgenticWorkflow)의 전체 게놈(절대 기준, SOT 패턴, 4계층 검증, Safety Hook 등)이 자식 워크플로우에 자동으로 내장됩니다.
 > 사용자가 수동으로 DNA를 설정할 필요 없습니다 — 생산 라인이 구조적으로 유전합니다. 상세: [`soul.md`](soul.md)
 
+> **실제 구현 사례**: **Sermon Assistant**가 AgenticWorkflow에서 분화된 최초의 자식 시스템입니다. 11개 박사급 연구 에이전트, GRA 3계층 품질 보증, P1 Master 함수 패턴, 신학 전문 번역 등 부모 DNA를 도메인에 맞게 발현합니다. 상세: [`SERMON-ASSISTANT-USER-MANUAL.md`](SERMON-ASSISTANT-USER-MANUAL.md)
+
 ---
 
 ## 3. 절대 기준

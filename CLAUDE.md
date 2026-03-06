@@ -90,6 +90,7 @@ AgenticWorkflow/
 │   │   └── _test_block_destructive.py (block_destructive_commands 테스트 — 43개)
 │   ├── context-snapshots/           ← 런타임 (gitignored)
 │   └── skills/
+│       ├── sermon-orchestrator/     (설교 오케스트레이터 — Phase 0→1→2→3 전체 흐름)
 │       ├── workflow-generator/      (워크플로우 설계·생성)
 │       └── doctoral-writing/        (박사급 학술 글쓰기)
 ├── translations/glossary.yaml       ← 번역 용어 사전

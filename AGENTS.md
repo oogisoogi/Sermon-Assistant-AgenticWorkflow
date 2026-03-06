@@ -274,6 +274,7 @@ AgenticWorkflow/
 │   ├── settings.json          ← Hook 설정 (Setup + SessionEnd)
 │   ├── agents/                ← Sub-agent 정의
 │   │   ├── translator.md     (영→한 번역 전문 에이전트 — glossary 기반 용어 일관성)
+│   │   ├── sermon-translator.md (신학 전문 번역 — @translator DNA 상속 + theological-glossary 기반)
 │   │   ├── reviewer.md       (Adversarial Review — 코드/산출물 비판적 분석, 읽기 전용)
 │   │   └── fact-checker.md   (Adversarial Review — 외부 사실 검증, 웹 접근)
 │   ├── commands/              ← Slash Commands

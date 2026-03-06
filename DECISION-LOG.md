@@ -746,6 +746,47 @@
 
 ---
 
+## 9. Sermon Workflow (설교 워크플로우)
+
+### ADR-052: Per-Sermon Subdirectory Isolation + P1 Master 함수
+
+- **날짜**: 2026-03-06
+- **상태**: Accepted
+- **맥락**: `sermon-output/` 디렉터리가 플랫 구조로 되어 있어, 다수의 설교가 누적되면 파일이 혼합되는 문제. 또한 Phase 0 초기화 시 AI Orchestrator가 개별 유틸리티 함수(`get_output_dir_name()`, `create_output_structure()`, `generate_session_json()`, `generate_checklist()`)를 임의 순서로 조합할 수 있어 할루시네이션 위험이 존재했다.
+- **결정**:
+  1. **Per-sermon subdirectory**: `sermon-output/[passage-YYYY-MM-DD]/` 패턴으로 설교별 격리. 동일 이름 충돌 시 `-2`, `-3` 등 숫자 접미사로 회피.
+  2. **P1 Master 함수 — `initialize_sermon_output()`**: Phase 0의 모든 초기화 작업(디렉터리 생성, session.json 생성, 체크리스트 생성, state.yaml 업데이트 데이터 반환)을 단일 함수 호출로 캡슐화. AI가 개별 함수를 조합할 여지를 원천 차단.
+  3. **P1 Master 함수 — `resolve_sermon_context()`**: Resume/Status 시 컨텍스트 복원을 단일 함수로 캡슐화. 2-path resolution: Primary(state.yaml → sermon.output_dir) + Fallback(directory scan via `find_active_session()`).
+  4. **`_build_sermon_path_map()`**: 16개 파일 경로를 결정론적으로 생성하는 내부 함수.
+  5. **2계층 SOT**: state.yaml(프로젝트 루트, 글로벌) + session.json(설교별 하위 디렉터리, 도메인 상태).
+  6. **Colon handling**: `8:1-10` → `8-1-10` 변환 (`get_output_dir_name()`에서 `[:/]` → `-` 치환 추가).
+- **근거**:
+  - **P1 할루시네이션 봉쇄**: "반복적으로 100% 정확해야 하는 작업"은 코드가 수행 (ADR-024 확장). Phase 0 초기화의 4단계를 AI에게 맡기면 순서 오류·누락 위험.
+  - **격리 원칙**: 설교별 독립 디렉터리로 파일 혼합 원천 차단. session.json과 연구 결과물이 같은 디렉터리에 위치하여 원자적 관리 가능.
+  - **SOT 일관성**: state.yaml의 `sermon.output_dir`이 모든 다운스트림의 경로 기준점. 변경 시 단일 지점만 수정.
+- **대안**:
+  - `_active/` 임시 디렉터리 + 완료 시 rename → 기각 (OS 파일 잠금, 이중 상태, passage 기반 이름이 Phase 0에서 이미 가용)
+  - AI가 개별 함수를 순차 호출 → 기각 (v1/v2 설계에서 할루시네이션 위험 확인)
+  - 프로젝트 루트에 state.yaml 대신 sermon-output 내부에 → 기각 (글로벌 SOT와 도메인 SOT의 역할 구분 필요)
+- **관련 파일**: `_sermon_lib.py` (6개 함수 추가/수정), `_test_sermon_lib.py` (22개 테스트 추가), `SKILL.md`, `sermon-start.md`, `sermon-resume.md`, `sermon-status.md`, `.gitignore`, `SERMON-ASSISTANT-ARCHITECTURE-AND-PHILOSOPHY.md`
+- **관련 커밋**: `fe052b7` feat: per-sermon subdirectory isolation + P1 Master functions
+
+### ADR-053: @sermon-translator — 신학 전문 번역 에이전트
+
+- **날짜**: 2026-03-06
+- **상태**: Accepted
+- **맥락**: 설교 연구 결과물의 번역에는 일반 번역(`@translator`)으로는 부족한 신학 전문 용어·표현의 정확성이 요구됨. 히브리어/헬라어 음역, 신학 개념, 설교학 용어 등이 일반 glossary로 커버되지 않음.
+- **결정**:
+  1. `@sermon-translator` 에이전트를 `@translator`의 DNA를 상속하되 신학 도메인에 특화하여 신규 생성
+  2. `translations/theological-glossary.yaml`을 전용 용어 사전으로 분리 (SOT: Orchestrator만 쓰기)
+  3. Wave Gate 통과 후 배치 번역 (Gate 실패 시 번역 낭비 방지)
+  4. pACS 4축: Ft(충실도), Ct(완전성), Nt(자연스러움), Tt(신학 정확도)
+- **근거**: P2(전문성 기반 위임) 원칙 적용. 신학 번역은 일반 번역과 도구 프로파일이 다르지 않지만, 용어 사전과 도메인 컨텍스트가 다르므로 전문화가 품질을 높임.
+- **대안**: @translator에 theological-glossary 추가 → 기각 (일반 번역과 신학 번역의 용어 사전 혼합으로 인한 오용 위험)
+- **관련 파일**: `.claude/agents/sermon-translator.md`, `translations/theological-glossary.yaml`, `CLAUDE.md`, `SKILL.md`
+
+---
+
 ## 부록: 커밋 히스토리 기반 타임라인
 
 | 날짜 | 커밋 | 결정 |
@@ -786,6 +827,8 @@
 | 2026-02-23 | (pending) | ADR-047: Abductive Diagnosis Layer — 품질 게이트 FAIL 시 구조화된 진단 |
 | 2026-02-23 | accepted | ADR-048: 전수조사 기반 시스템 일관성 강화 — 재시도 한도 10/15 + P1 doc-code sync + D-7 #5 |
 | 2026-03-01 | accepted | ADR-049: CLAUDE.md 경량화 — TOC 패턴 전환 (512→160줄, docs/protocols/ 분리) |
+| 2026-03-06 | `fe052b7` | ADR-052: Per-Sermon Subdirectory Isolation + P1 Master 함수 |
+| 2026-03-06 | accepted | ADR-053: @sermon-translator — 신학 전문 번역 에이전트 |
 
 ---
 
