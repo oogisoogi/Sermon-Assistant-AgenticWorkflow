@@ -15,7 +15,7 @@ Display current sermon research workflow progress.
 ## Display
 
 1. **Current Phase**: Phase 0/1/2/2.5/3
-2. **Current Step**: N/141
+2. **Current Step**: N/130
 3. **Progress**: N% complete
 4. **Passage**: [selected passage or pending]
 5. **Completed Waves**: [list]

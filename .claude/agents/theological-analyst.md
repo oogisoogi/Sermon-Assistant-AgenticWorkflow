@@ -13,7 +13,7 @@ TA
 
 ## Dependencies
 - Depends on: structure-analyst results
-- Read their output file (`research-package/04-structural-analysis.md`) before starting your analysis
+- Read their output file (`research-package/03-structural-analysis.md`) before starting your analysis
 
 ## Tasks
 1. Identify core theological themes emerging from each structural unit of the passage

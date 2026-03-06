@@ -54,6 +54,9 @@ CONFIDENCE_THRESHOLDS: dict[str, int] = {
 }
 
 # ClaimType → SRCS weight distribution {CS, GS, US, VS}
+# FACTUAL weights from workflow.md:643-648.
+# Non-FACTUAL weights are implementation-defined extensions following the
+# principle: higher subjectivity → lower CS/GS, higher US/VS.
 SRCS_WEIGHTS: dict[str, dict[str, float]] = {
     "FACTUAL":       {"CS": 0.3, "GS": 0.4, "US": 0.1, "VS": 0.2},
     "LINGUISTIC":    {"CS": 0.35, "GS": 0.35, "US": 0.1, "VS": 0.2},
@@ -93,12 +96,11 @@ WAVE_AGENTS: dict[str, list[str]] = {
     "wave-4": ["rhetorical-analyst"],
 }
 
-# Wave gate boundaries: gate N validates all agents up to wave N
+# Wave gate boundaries: gate N validates the preceding wave's agents
 WAVE_GATE_MAP: dict[str, list[str]] = {
     "gate-1": WAVE_AGENTS["wave-1"],
-    "gate-2": WAVE_AGENTS["wave-1"] + WAVE_AGENTS["wave-2"],
-    "gate-3": (WAVE_AGENTS["wave-1"] + WAVE_AGENTS["wave-2"]
-               + WAVE_AGENTS["wave-3"]),
+    "gate-2": WAVE_AGENTS["wave-2"],
+    "gate-3": WAVE_AGENTS["wave-3"],
 }
 
 # Agent output file mapping (workflow.md:709-720)
@@ -130,6 +132,11 @@ _FIREWALL_BLOCK = [
     re.compile(r"\bwithout\s+(any\s+)?exception", re.IGNORECASE),
     re.compile(r"\buniversally\s+accepted", re.IGNORECASE),
     re.compile(r"\bno\s+scholar\s+disagrees", re.IGNORECASE),
+    # Korean equivalents
+    re.compile(r"모든\s*학자(들이|가)\s*(동의|합의)"),
+    re.compile(r"예외\s*없이"),
+    re.compile(r"보편적으로\s*인정"),
+    re.compile(r"반론(의\s*여지가|이)\s*없"),
 ]
 
 _FIREWALL_REQUIRE_SOURCE = [
@@ -157,20 +164,18 @@ _FIREWALL_VERIFY = [
 # Input mode patterns (workflow.md:92-97)
 INPUT_MODES = {"theme", "passage", "series"}
 
-# 120-step checklist template section counts (workflow.md:1084-1099)
+# Checklist template section counts (workflow.md:1084-1099 table)
+# Note: workflow.md titles this "120-step" but the table sums to 130.
+# Gates, SRCS Evaluation, and Research Synthesis are implicit within
+# the Wave/HITL step counts as documented in the source table.
 CHECKLIST_SECTIONS = [
     ("Phase 0: Initialization", 6),
     ("Phase 0-A: Passage Search (Mode A)", 6),
     ("HITL-1: Passage Selection", 3),
     ("Wave 1: Independent Analysis", 16),
-    ("Gate 1: Cross-Validation", 2),
     ("Wave 2: Dependent Analysis", 12),
-    ("Gate 2: Cross-Validation", 2),
     ("Wave 3: Deep Analysis", 12),
-    ("Gate 3: Cross-Validation", 2),
     ("Wave 4: Integration Analysis", 6),
-    ("SRCS Evaluation", 3),
-    ("Research Synthesis", 2),
     ("HITL-2: Research Review", 8),
     ("Phase 2: Planning", 16),
     ("HITL-3a/3b: Style & Message", 10),
@@ -490,17 +495,18 @@ def calculate_agent_srcs(
             "below_threshold": [],
         }
 
+    # SRCS score threshold: claims below this are flagged (workflow.md:979)
+    srcs_threshold = 70
     below: list[dict[str, Any]] = []
     for c in claims_scores:
         if c is None:
             continue
         ct = c.get("claim_type", "")
-        threshold = CONFIDENCE_THRESHOLDS.get(ct, 70)
-        if c["weighted_score"] < threshold:
+        if c["weighted_score"] < srcs_threshold:
             below.append({
                 "claim_type": ct,
                 "score": c["weighted_score"],
-                "threshold": threshold,
+                "threshold": srcs_threshold,
             })
 
     return {
@@ -604,7 +610,10 @@ def validate_gate_structure(
                 try:
                     with open(filepath, "r", encoding="utf-8") as f:
                         content = f.read(5000)  # Read first 5KB
-                    check["has_claims"] = "claims:" in content or "claim" in content.lower()
+                    check["has_claims"] = bool(
+                        re.search(r"^\s*claims:\s*$", content, re.MULTILINE)
+                        or "- id:" in content
+                    )
                 except OSError:
                     pass
 
@@ -648,12 +657,12 @@ def validate_gate_result(
 # ===================================================================
 
 def generate_checklist() -> str:
-    """Generate the 120-step todo-checklist.md content.
+    """Generate the todo-checklist.md content (130 steps per workflow.md table).
 
     Reference: workflow.md:1078-1099
     """
     lines: list[str] = []
-    lines.append("# Sermon Research Workflow — 120-Step Checklist")
+    lines.append("# Sermon Research Workflow Checklist")
     lines.append("")
     lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
     lines.append("")
@@ -811,7 +820,7 @@ def get_output_dir_name(title: str) -> str:
 
     Format: sermon-output/[title-YYYY-MM-DD]/
     """
-    safe_title = re.sub(r"[^\w\s-]", "", title).strip()
+    safe_title = re.sub(r"[^\w\s가-힣-]", "", title).strip()
     safe_title = re.sub(r"\s+", "-", safe_title)[:50]
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return f"sermon-output/{safe_title}-{date_str}"
@@ -1001,19 +1010,23 @@ def check_pending_gate(current_step: int, completed_gates: list[str]) -> Optiona
     """Check if there's an unexecuted gate before the current step.
 
     Returns gate name if a gate is pending, None otherwise.
-    This provides the enforcement mechanism for gate execution.
+    Gates fire at wave boundaries (end of Wave 1/2/3 sections).
     """
-    # Step ranges for gates (computed from CHECKLIST_SECTIONS)
+    # Compute wave end steps from CHECKLIST_SECTIONS
     step = 1
-    gate_steps: dict[str, int] = {}
+    wave_end_steps: dict[str, int] = {}
     for section_name, count in CHECKLIST_SECTIONS:
-        if "Gate" in section_name:
-            gate_num = section_name.split(":")[0].strip().lower().replace(" ", "-")
-            gate_steps[gate_num] = step
-        step += count
+        end = step + count - 1
+        if "Wave 1" in section_name:
+            wave_end_steps["gate-1"] = end
+        elif "Wave 2" in section_name:
+            wave_end_steps["gate-2"] = end
+        elif "Wave 3" in section_name:
+            wave_end_steps["gate-3"] = end
+        step = end + 1
 
-    for gate_name, gate_start in gate_steps.items():
-        if current_step > gate_start and gate_name not in completed_gates:
+    for gate_name, wave_end in wave_end_steps.items():
+        if current_step > wave_end and gate_name not in completed_gates:
             return gate_name
 
     return None

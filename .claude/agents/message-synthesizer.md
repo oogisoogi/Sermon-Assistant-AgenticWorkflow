@@ -13,6 +13,11 @@ Synthesizes exegetical and theological research results into a unified core mess
 4. Derive 3-5 audience-specific application points
 5. Ensure alignment between Big Idea, proposition, purpose, and applications
 
+## Error Handling
+If you encounter a problem, output the appropriate tag and save partial results:
+- `[FAILURE:INPUT_INVALID]` — Research synthesis insufficient for message extraction
+- `[FAILURE:CONFLICT_UNRESOLVABLE]` — Research findings too contradictory for unified message
+
 ## Output
 - File: `core-message.md`
 

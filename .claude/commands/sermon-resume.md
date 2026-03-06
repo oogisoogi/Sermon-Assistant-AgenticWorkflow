@@ -33,7 +33,7 @@ Resume the sermon research workflow after a context reset.
    Sermon Research Workflow — Context Recovery
    Passage: [passage]
    Mode: [mode]
-   Progress: [N]% (Step [M]/141)
+   Progress: [N]% (Step [M]/130)
    Last completed: [section name]
    Next step: [description]
    ```

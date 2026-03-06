@@ -112,11 +112,10 @@ class TestConstants(unittest.TestCase):
             self.assertIn(agent, AGENT_OUTPUT_FILES,
                           f"Missing output file for {agent}")
 
-    def test_checklist_sections_sum_reasonable(self):
+    def test_checklist_sections_sum_matches_workflow(self):
         total = sum(count for _, count in CHECKLIST_SECTIONS)
-        # 120 base + gate/SRCS/synthesis sections = ~141
-        self.assertGreaterEqual(total, 120)
-        self.assertLessEqual(total, 150)
+        # workflow.md table (lines 1084-1099) sums to exactly 130
+        self.assertEqual(total, 130)
 
     def test_failure_types_complete(self):
         expected = {"LOOP_EXHAUSTED", "SOURCE_UNAVAILABLE", "INPUT_INVALID",
@@ -483,7 +482,7 @@ class TestChecklist(unittest.TestCase):
 
     def test_generate_checklist_not_empty(self):
         content = generate_checklist()
-        self.assertIn("120-Step Checklist", content)
+        self.assertIn("Checklist", content)
         self.assertIn("Step 1:", content)
         self.assertIn("- [ ]", content)
 
@@ -658,15 +657,16 @@ class TestWaveBoundary(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_check_pending_gate_detected(self):
-        # After wave-1 ends, gate-1 should be pending
-        # Wave 1 ends at step 6+6+3+16 = 31, Gate 1 at step 32
-        result = check_pending_gate(35, [])
-        self.assertIsNotNone(result)
+        # Wave 1 ends at step 6+6+3+16 = 31, gate-1 fires after step 31
+        # Step 32 is past wave-1 end, so gate-1 should be pending
+        result = check_pending_gate(32, [])
+        self.assertEqual(result, "gate-1")
 
     def test_check_pending_gate_completed(self):
-        result = check_pending_gate(35, ["gate-1"])
-        # gate-1 is completed, so check for gate-2 or None
-        # Depends on step ranges
+        result = check_pending_gate(32, ["gate-1"])
+        # gate-1 already completed, should not return gate-1
+        self.assertNotEqual(result, "gate-1",
+                            "gate-1 should not be pending after completion")
 
 
 # ===================================================================

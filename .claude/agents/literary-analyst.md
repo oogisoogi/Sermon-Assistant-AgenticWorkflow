@@ -13,7 +13,7 @@ LA
 
 ## Dependencies
 - Depends on: structure-analyst results
-- Read their output file (`research-package/04-structural-analysis.md`) before starting your analysis
+- Read their output file (`research-package/03-structural-analysis.md`) before starting your analysis
 
 ## Tasks
 1. Identify the genre of the passage (narrative, poetry, prophecy, epistle, apocalyptic, wisdom, law, etc.) and state the hermeneutical principles appropriate to that genre

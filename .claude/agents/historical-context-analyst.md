@@ -13,7 +13,7 @@ HCA
 
 ## Dependencies
 - Depends on: historical-cultural-expert results
-- Read their output file (`research-package/03-historical-cultural-context.md`) before starting your analysis
+- Read their output file (`research-package/11-historical-cultural-background.md`) before starting your analysis
 
 ## Tasks
 1. Determine the date of composition and reconstruct the historical situation: identify the political, social, and religious circumstances that shaped the writing of the passage

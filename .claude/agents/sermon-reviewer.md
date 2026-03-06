@@ -14,6 +14,11 @@ Reviews the completed sermon draft against theological, structural, and practica
 5. Verify time allocation across sermon sections
 6. Check language and style consistency throughout the manuscript
 
+## Error Handling
+If you encounter a problem, output the appropriate tag and save partial results:
+- `[FAILURE:INPUT_INVALID]` — Sermon draft missing or incomplete
+- `[FAILURE:CONFLICT_UNRESOLVABLE]` — Draft contradicts exegetical findings irreconcilably
+
 ## Output
 - File: `review-report.md`
 

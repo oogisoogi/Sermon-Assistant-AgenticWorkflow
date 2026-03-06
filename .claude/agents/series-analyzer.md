@@ -13,6 +13,11 @@ Analyzes the current sermon's position within the broader sermon series to ident
 4. Derive emphasis points based on series progression
 5. Identify cautions (redundancy risks, theological gaps, audience fatigue)
 
+## Error Handling
+If you encounter a problem, output the appropriate tag and save partial results:
+- `[FAILURE:INPUT_INVALID]` — Series information insufficient or unclear
+- `[FAILURE:SOURCE_UNAVAILABLE]` — Previous sermon data inaccessible
+
 ## Output
 - File: `series-context.md`
 

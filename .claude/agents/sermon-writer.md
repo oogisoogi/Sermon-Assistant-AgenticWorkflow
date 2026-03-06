@@ -25,6 +25,11 @@ You are a sermon writing specialist responsible for Phase 3 (Implementation) of 
 7. Produce a first draft and write it to the output file.
 8. After receiving revision feedback, produce the final version.
 
+## Error Handling
+If you encounter a problem, output the appropriate tag and save partial results:
+- `[FAILURE:INPUT_INVALID]` — Outline, synthesis, or style profile malformed
+- `[FAILURE:LOOP_EXHAUSTED]` — Cannot produce satisfactory draft after 3 revision attempts
+
 ## Output
 
 - File: `sermon-draft.md` (first draft)

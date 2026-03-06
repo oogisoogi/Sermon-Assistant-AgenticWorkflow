@@ -40,6 +40,8 @@ def _extract_yaml_claims(content: str) -> Optional[list[dict]]:
     try:
         import yaml
     except ImportError:
+        print("WARNING: PyYAML not installed, GroundedClaim validation skipped.",
+              file=sys.stderr)
         return None
 
     # Find YAML blocks

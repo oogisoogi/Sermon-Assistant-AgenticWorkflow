@@ -24,7 +24,7 @@ Start the Sermon Research Workflow. This command initializes Phase 0 and begins 
 2. Detect input mode using `_sermon_lib.detect_input_mode()` if not specified
 3. Create output directory structure via `_sermon_lib.create_output_structure()`
 4. Initialize session.json via `_sermon_lib.generate_session_json()`
-5. Generate 120-step checklist via `_sermon_lib.generate_checklist()`
+5. Generate 130-step checklist via `_sermon_lib.generate_checklist()`
 6. Initialize state.yaml with sermon workflow fields
 7. Check `user-resource/` for user-provided materials
 8. If Mode A: dispatch `@passage-finder` for candidate passages
