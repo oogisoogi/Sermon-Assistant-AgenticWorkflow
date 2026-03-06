@@ -36,30 +36,30 @@ Orchestrator (this session)
 #### Wave Execution Pattern (for each wave):
 ```
 1. For each agent in the wave:
-   Task(subagent_type="{agent-name}", prompt="""
-     You are {agent-name}.
-     Read .claude/agents/references/gra-compliance.md first.
-     Passage: {passage_text}
-     Analysis level: {level}
-     Output to: {output_dir}/research-package/{output_file}
-     {Wave 2+: Read dependency outputs first: {dependency_files}}
-   """)
+   prompt = _sermon_lib.build_research_agent_prompt(agent_name, passage, output_dir, level)
+   Task(subagent_type="{agent-name}", prompt=prompt)
 
 2. Wait for all agents to complete
 
 3. For each agent output:
-   a. Verify file exists and size > 100 bytes (L0)
-   b. Parse claims and validate: _sermon_lib.validate_claims_batch()
-   c. Check hallucination firewall: _sermon_lib.check_hallucination_firewall()
-   d. Update checklist: _sermon_lib.update_checklist()
-   e. Update state.yaml outputs
+   result = _sermon_lib.validate_agent_output(filepath, agent_name)
+   # This single call performs: L0 check + claim extraction + schema validation + hallucination firewall
+   if not result["valid"]:
+       handle errors per result["errors"]
+   Update checklist: _sermon_lib.update_checklist()
+   Update state.yaml outputs
 
 4. Run Cross-Validation Gate (HYBRID):
    a. CODE: _sermon_lib.validate_gate_structure(gate_name, output_dir)
    b. AI: Read all wave outputs, check for semantic contradictions
    c. CODE: _sermon_lib.validate_gate_result(gate, structural, semantic, findings)
-   d. If gate FAILS: re-run conflicting agents with correction instructions
+   d. CODE: _sermon_lib.record_gate_completion(sermon_state, gate_name)
+   e. If gate FAILS: re-run conflicting agents with correction instructions
 ```
+
+**P1 Hallucination Prevention**: Steps 1 and 3 are fully deterministic Python.
+The Orchestrator MUST use `build_research_agent_prompt()` (not manual prompt construction)
+and `validate_agent_output()` (not manual claim reading) to prevent hallucination.
 
 #### Wave Definitions
 - **Wave 1** (parallel): original-text-analyst, manuscript-comparator, biblical-geography-expert, historical-cultural-expert → Gate 1
@@ -208,3 +208,4 @@ When context resets mid-workflow:
 - `.claude/agents/references/gra-compliance.md` — GRA protocol
 - `.claude/hooks/scripts/_sermon_lib.py` — Deterministic functions
   - Note: `workflow.md` references `checklist_manager.py` (§996); this maps to `_sermon_lib.py` functions (`generate_checklist()`, `update_checklist()`, `check_pending_gate()`, etc.)
+  - P1 functions (hallucination prevention): `build_research_agent_prompt()`, `validate_agent_output()`, `extract_claims_from_output()`, `resolve_dependency_files()`, `record_gate_completion()`

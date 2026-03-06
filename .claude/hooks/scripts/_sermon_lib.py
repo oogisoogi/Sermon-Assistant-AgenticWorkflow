@@ -15,6 +15,10 @@ Functions grouped by domain:
   5. Checklist Management (130-step todo-checklist.md per workflow.md table)
   6. Session Initialization (Phase 0 deterministic setup)
   7. Error Handling (agent-level 5 types + workflow-level 3 handlers)
+  8-10. Wave boundary, utility, formatting
+  11. Agent Dispatch (dependency resolution + prompt generation)
+  12. Agent Output Validation (P1 claim extraction + unified pipeline)
+  13. Gate Completion (safe SOT update with ordering enforcement)
 
 Reference: prompt/workflow.md (Sermon Research Workflow v2.0)
 """
@@ -116,6 +120,26 @@ AGENT_OUTPUT_FILES: dict[str, str] = {
     "keyword-expert": "09-keyword-study.md",
     "biblical-geography-expert": "10-biblical-geography.md",
     "historical-cultural-expert": "11-historical-cultural-background.md",
+}
+
+# Agent dependency graph (workflow.md:765-808)
+# Key = agent, Value = list of upstream agents whose output must be read first
+AGENT_DEPENDENCIES: dict[str, list[str]] = {
+    # Wave 1: independent (no dependencies)
+    "original-text-analyst": [],
+    "manuscript-comparator": [],
+    "biblical-geography-expert": [],
+    "historical-cultural-expert": [],
+    # Wave 2: depends on Wave 1
+    "structure-analyst": ["original-text-analyst"],
+    "parallel-passage-analyst": ["original-text-analyst"],
+    "keyword-expert": ["original-text-analyst"],
+    # Wave 3: depends on Wave 2 (or Wave 1 for historical-context-analyst)
+    "theological-analyst": ["structure-analyst"],
+    "literary-analyst": ["structure-analyst"],
+    "historical-context-analyst": ["historical-cultural-expert"],
+    # Wave 4: depends on Wave 3
+    "rhetorical-analyst": ["literary-analyst"],
 }
 
 # Failure types (workflow.md:689-699)
@@ -1246,3 +1270,335 @@ def format_srcs_report(agent_results: dict[str, dict[str, Any]]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ===================================================================
+# 11. AGENT DISPATCH — Dependency Resolution & Prompt Generation
+# ===================================================================
+
+def resolve_dependency_files(
+    agent_name: str,
+    output_dir: str,
+) -> list[dict[str, str]]:
+    """Resolve dependency file paths for a research agent.
+
+    Returns list of {"agent": str, "path": str} for each dependency.
+    Empty list for Wave 1 agents (no dependencies).
+
+    Reference: workflow.md:765-808 (depends_on fields)
+    """
+    deps = AGENT_DEPENDENCIES.get(agent_name, [])
+    result: list[dict[str, str]] = []
+    for dep_agent in deps:
+        dep_file = AGENT_OUTPUT_FILES.get(dep_agent)
+        if dep_file:
+            dep_path = os.path.join(output_dir, "research-package", dep_file)
+            result.append({"agent": dep_agent, "path": dep_path})
+    return result
+
+
+def build_research_agent_prompt(
+    agent_name: str,
+    passage: str,
+    output_dir: str,
+    analysis_level: str = "Standard",
+) -> Optional[str]:
+    """Generate deterministic runtime prompt for a GRA research agent.
+
+    The agent's static instructions are loaded from .claude/agents/{agent}.md
+    via Claude Code's subagent_type mechanism. This function generates
+    only the runtime parameters that vary per execution.
+
+    Args:
+        agent_name: Must be one of the 11 GRA research agents
+        passage: Bible passage text (e.g., "Psalm 23:1-6")
+        output_dir: Base output directory
+        analysis_level: "Standard", "Advanced", or "Expert"
+
+    Returns:
+        Formatted prompt string, or None if agent_name is not a research agent
+
+    Reference: workflow.md:202-343 (agent definitions)
+    """
+    output_file = AGENT_OUTPUT_FILES.get(agent_name)
+    if output_file is None:
+        return None  # Not a research agent
+
+    output_path = os.path.join(output_dir, "research-package", output_file)
+
+    lines = [
+        "## Runtime Parameters",
+        "",
+        f"Passage: {passage}",
+        f"Analysis Level: {analysis_level}",
+        f"Output File: {output_path}",
+        "",
+        "## Required Reading",
+        "Read `.claude/agents/references/gra-compliance.md` before starting.",
+        "All claims must conform to the GroundedClaim schema defined therein.",
+    ]
+
+    # Add dependency files for Wave 2+ agents
+    deps = resolve_dependency_files(agent_name, output_dir)
+    if deps:
+        lines.append("")
+        lines.append("## Dependency Files (read before starting your analysis)")
+        for dep in deps:
+            lines.append(f"- {dep['agent']}: `{dep['path']}`")
+
+    return "\n".join(lines)
+
+
+# ===================================================================
+# 12. AGENT OUTPUT VALIDATION — P1 Deterministic Pipeline
+# ===================================================================
+
+def extract_claims_from_output(
+    filepath: str,
+) -> dict[str, Any]:
+    """Extract and parse YAML claims from an agent's markdown output.
+
+    Deterministically finds ```yaml blocks containing 'claims:' key,
+    parses them with PyYAML, and returns structured data.
+
+    P1 Compliance: No AI judgment. Pure regex + YAML parsing.
+
+    Returns:
+        {
+            "success": bool,
+            "claims": list[dict],
+            "raw_yaml": str,
+            "error": str | None,
+        }
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as e:
+        return {
+            "success": False, "claims": [], "raw_yaml": "",
+            "error": f"Cannot read file: {e}",
+        }
+
+    # Find YAML code blocks
+    yaml_blocks = re.findall(
+        r"```ya?ml\s*\n(.*?)```",
+        content,
+        re.DOTALL,
+    )
+
+    if not yaml_blocks:
+        # Fallback: unfenced claims: section
+        claims_match = re.search(
+            r"^(claims:\s*\n(?:\s+.*\n?)+)",
+            content,
+            re.MULTILINE,
+        )
+        if claims_match:
+            yaml_blocks = [claims_match.group(1)]
+
+    if not yaml_blocks:
+        return {
+            "success": False, "claims": [], "raw_yaml": "",
+            "error": "No YAML claims block found in output",
+        }
+
+    # Parse YAML blocks
+    try:
+        import yaml
+    except ImportError:
+        return {
+            "success": False, "claims": [], "raw_yaml": "",
+            "error": "PyYAML not installed. Run: pip install pyyaml",
+        }
+
+    all_claims: list[dict[str, Any]] = []
+    raw_parts: list[str] = []
+
+    for block in yaml_blocks:
+        raw_parts.append(block)
+        try:
+            parsed = yaml.safe_load(block)
+        except yaml.YAMLError:
+            continue  # Skip malformed blocks
+
+        if isinstance(parsed, dict) and "claims" in parsed:
+            claims_data = parsed["claims"]
+            if isinstance(claims_data, list):
+                all_claims.extend(claims_data)
+
+    raw_yaml = "\n---\n".join(raw_parts)
+
+    if not all_claims:
+        return {
+            "success": False, "claims": [], "raw_yaml": raw_yaml,
+            "error": "YAML blocks found but no valid 'claims' key with list value",
+        }
+
+    return {
+        "success": True, "claims": all_claims,
+        "raw_yaml": raw_yaml, "error": None,
+    }
+
+
+def validate_agent_output(
+    filepath: str,
+    agent_name: str,
+) -> dict[str, Any]:
+    """All-in-one validation pipeline for a research agent's output.
+
+    Combines L0 validation, claim extraction, schema validation,
+    and hallucination firewall into a single deterministic pipeline.
+
+    P1 Compliance: The Orchestrator calls this ONE function after each
+    agent completes. No AI judgment needed for validation.
+
+    Returns:
+        {
+            "valid": bool,
+            "agent": str,
+            "filepath": str,
+            "l0": {"exists": bool, "size_ok": bool, "size": int},
+            "claims": {"extracted": int, "valid": bool,
+                       "errors": list[str], "claim_ids": list[str]},
+            "firewall": {"block_count": int, "findings": list[dict]},
+            "errors": list[str],
+        }
+    """
+    result: dict[str, Any] = {
+        "valid": True,
+        "agent": agent_name,
+        "filepath": filepath,
+        "l0": {"exists": False, "size_ok": False, "size": 0},
+        "claims": {"extracted": 0, "valid": True, "errors": [], "claim_ids": []},
+        "firewall": {"block_count": 0, "findings": []},
+        "errors": [],
+    }
+
+    # --- L0: File existence and size ---
+    if not os.path.isfile(filepath):
+        result["valid"] = False
+        result["errors"].append(f"Output file not found: {filepath}")
+        return result
+
+    result["l0"]["exists"] = True
+    size = os.path.getsize(filepath)
+    result["l0"]["size"] = size
+
+    if size < 100:
+        result["valid"] = False
+        result["l0"]["size_ok"] = False
+        result["errors"].append(f"Output file too small: {size} bytes (min 100)")
+        return result
+
+    result["l0"]["size_ok"] = True
+
+    # --- Read file content ---
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as e:
+        result["valid"] = False
+        result["errors"].append(f"Cannot read file: {e}")
+        return result
+
+    # --- Hallucination Firewall ---
+    firewall_findings = check_hallucination_firewall(content)
+    block_findings = [f for f in firewall_findings if f["level"] == "BLOCK"]
+    result["firewall"]["findings"] = firewall_findings
+    result["firewall"]["block_count"] = len(block_findings)
+
+    if block_findings:
+        result["valid"] = False
+        for bf in block_findings:
+            result["errors"].append(
+                f"BLOCK-level hallucination: '{bf['match']}' "
+                f"at position {bf['position']}"
+            )
+
+    # --- Claim Extraction & Validation (GRA agents only) ---
+    if agent_name in AGENT_OUTPUT_FILES:
+        extraction = extract_claims_from_output(filepath)
+
+        if not extraction["success"]:
+            result["valid"] = False
+            result["errors"].append(
+                f"Claim extraction failed: {extraction['error']}"
+            )
+        else:
+            claims = extraction["claims"]
+            result["claims"]["extracted"] = len(claims)
+
+            validation = validate_claims_batch(claims, agent_name)
+            result["claims"]["valid"] = validation["valid"]
+            result["claims"]["errors"] = validation["errors"]
+            result["claims"]["claim_ids"] = validation["claim_ids"]
+
+            if not validation["valid"]:
+                result["valid"] = False
+                result["errors"].extend(validation["errors"])
+
+    return result
+
+
+# ===================================================================
+# 13. GATE COMPLETION — Safe SOT Update
+# ===================================================================
+
+def record_gate_completion(
+    sermon_state: dict[str, Any],
+    gate_name: str,
+) -> dict[str, Any]:
+    """Safely record gate completion in sermon state.
+
+    Validates gate name, prevents duplicates, ensures ordering.
+    Returns result dict; does NOT write to file (Orchestrator's job).
+
+    Returns:
+        {"success": bool, "sermon_state": dict, "error": str | None}
+    """
+    valid_gates = set(WAVE_GATE_MAP.keys())
+
+    if gate_name not in valid_gates:
+        return {
+            "success": False,
+            "sermon_state": sermon_state,
+            "error": f"Invalid gate name '{gate_name}'. "
+                     f"Valid: {sorted(valid_gates)}",
+        }
+
+    completed = sermon_state.get("completed_gates", [])
+    if not isinstance(completed, list):
+        completed = []
+
+    if gate_name in completed:
+        return {
+            "success": False,
+            "sermon_state": sermon_state,
+            "error": f"Gate '{gate_name}' already recorded as completed",
+        }
+
+    # Validate ordering: gate-1 before gate-2 before gate-3
+    gate_order = ["gate-1", "gate-2", "gate-3"]
+    gate_idx = gate_order.index(gate_name) if gate_name in gate_order else -1
+
+    if gate_idx > 0:
+        required_prev = gate_order[gate_idx - 1]
+        if required_prev not in completed:
+            return {
+                "success": False,
+                "sermon_state": sermon_state,
+                "error": (
+                    f"Cannot complete '{gate_name}' before "
+                    f"'{required_prev}'. Completed: {completed}"
+                ),
+            }
+
+    updated = dict(sermon_state)
+    updated["completed_gates"] = completed + [gate_name]
+
+    return {
+        "success": True,
+        "sermon_state": updated,
+        "error": None,
+    }

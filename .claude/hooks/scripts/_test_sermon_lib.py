@@ -12,6 +12,9 @@ Tests organized by function group:
   7. Error Handling
   8. Wave Boundary Detection
   9. Constants Integrity
+  10. Agent Dependencies & Prompt Generation
+  11. Agent Output Validation (extract + pipeline)
+  12. Gate Completion Safety
 """
 
 import json
@@ -65,6 +68,12 @@ from _sermon_lib import (
     handle_research_incomplete,
     handle_validation_failure,
     handle_srcs_below_threshold,
+    AGENT_DEPENDENCIES,
+    resolve_dependency_files,
+    build_research_agent_prompt,
+    extract_claims_from_output,
+    validate_agent_output,
+    record_gate_completion,
 )
 
 
@@ -856,6 +865,409 @@ class TestKoreanHallucinationFirewall(unittest.TestCase):
         findings = check_hallucination_firewall(text)
         block = [f for f in findings if f["level"] == "BLOCK"]
         self.assertEqual(len(block), 0)
+
+
+# ===================================================================
+# 10. Agent Dependencies & Prompt Generation Tests
+# ===================================================================
+
+class TestAgentDependencies(unittest.TestCase):
+    """Verify AGENT_DEPENDENCIES matches workflow.md:765-808."""
+
+    def test_all_research_agents_have_entry(self):
+        for agent in AGENT_OUTPUT_FILES:
+            self.assertIn(agent, AGENT_DEPENDENCIES)
+
+    def test_wave1_agents_independent(self):
+        wave1 = WAVE_AGENTS["wave-1"]
+        for agent in wave1:
+            self.assertEqual(AGENT_DEPENDENCIES[agent], [])
+
+    def test_wave2_depend_on_wave1(self):
+        wave1 = set(WAVE_AGENTS["wave-1"])
+        for agent in WAVE_AGENTS["wave-2"]:
+            deps = AGENT_DEPENDENCIES[agent]
+            self.assertTrue(len(deps) > 0, f"{agent} should have deps")
+            for dep in deps:
+                self.assertIn(dep, wave1, f"{agent} dep {dep} not in wave-1")
+
+    def test_wave3_depend_on_wave2_or_wave1(self):
+        upstream = set(WAVE_AGENTS["wave-1"]) | set(WAVE_AGENTS["wave-2"])
+        for agent in WAVE_AGENTS["wave-3"]:
+            deps = AGENT_DEPENDENCIES[agent]
+            self.assertTrue(len(deps) > 0, f"{agent} should have deps")
+            for dep in deps:
+                self.assertIn(dep, upstream)
+
+    def test_wave4_depend_on_wave3(self):
+        wave3 = set(WAVE_AGENTS["wave-3"])
+        for agent in WAVE_AGENTS["wave-4"]:
+            deps = AGENT_DEPENDENCIES[agent]
+            self.assertTrue(len(deps) > 0, f"{agent} should have deps")
+            for dep in deps:
+                self.assertIn(dep, wave3)
+
+    def test_no_circular_dependencies(self):
+        """Verify no agent depends on itself or creates a cycle."""
+        for agent, deps in AGENT_DEPENDENCIES.items():
+            self.assertNotIn(agent, deps, f"{agent} depends on itself")
+
+
+class TestResolveDependencyFiles(unittest.TestCase):
+
+    def test_wave1_returns_empty(self):
+        result = resolve_dependency_files("original-text-analyst", "/out")
+        self.assertEqual(result, [])
+
+    def test_wave2_returns_correct_paths(self):
+        result = resolve_dependency_files("structure-analyst", "/out")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["agent"], "original-text-analyst")
+        self.assertIn("01-original-text-analysis.md", result[0]["path"])
+
+    def test_unknown_agent_returns_empty(self):
+        result = resolve_dependency_files("nonexistent-agent", "/out")
+        self.assertEqual(result, [])
+
+
+class TestBuildResearchAgentPrompt(unittest.TestCase):
+
+    def test_wave1_agent_no_deps_section(self):
+        prompt = build_research_agent_prompt(
+            "original-text-analyst", "Psalm 23:1-6", "/out", "Standard")
+        self.assertIsNotNone(prompt)
+        self.assertIn("Psalm 23:1-6", prompt)
+        self.assertIn("01-original-text-analysis.md", prompt)
+        self.assertIn("gra-compliance.md", prompt)
+        self.assertNotIn("Dependency Files", prompt)
+
+    def test_wave2_agent_has_deps_section(self):
+        prompt = build_research_agent_prompt(
+            "structure-analyst", "Genesis 1:1-3", "/out", "Advanced")
+        self.assertIsNotNone(prompt)
+        self.assertIn("Dependency Files", prompt)
+        self.assertIn("original-text-analyst", prompt)
+        self.assertIn("01-original-text-analysis.md", prompt)
+        self.assertIn("Advanced", prompt)
+
+    def test_wave4_agent_has_literary_dep(self):
+        prompt = build_research_agent_prompt(
+            "rhetorical-analyst", "John 3:16", "/out")
+        self.assertIn("literary-analyst", prompt)
+        self.assertIn("06-literary-analysis.md", prompt)
+
+    def test_non_research_agent_returns_none(self):
+        prompt = build_research_agent_prompt(
+            "sermon-writer", "Psalm 23", "/out")
+        self.assertIsNone(prompt)
+
+    def test_all_research_agents_produce_prompt(self):
+        for agent in AGENT_OUTPUT_FILES:
+            prompt = build_research_agent_prompt(
+                agent, "Test passage", "/out")
+            self.assertIsNotNone(prompt, f"{agent} should produce a prompt")
+            self.assertIn("Runtime Parameters", prompt)
+            self.assertIn("gra-compliance.md", prompt)
+
+
+# ===================================================================
+# 11. Agent Output Validation Tests
+# ===================================================================
+
+class TestExtractClaimsFromOutput(unittest.TestCase):
+
+    def _write_temp(self, content: str) -> str:
+        fd, path = tempfile.mkstemp(suffix=".md")
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        return path
+
+    def test_extract_fenced_yaml(self):
+        content = """# Analysis
+
+Some text here.
+
+```yaml
+claims:
+  - id: "OTA-001"
+    text: "Test claim"
+    claim_type: FACTUAL
+    sources:
+      - type: PRIMARY
+        reference: "BDB p.100"
+        verified: true
+    confidence: 95
+    uncertainty: null
+```
+
+More text.
+"""
+        path = self._write_temp(content)
+        try:
+            result = extract_claims_from_output(path)
+            self.assertTrue(result["success"])
+            self.assertEqual(len(result["claims"]), 1)
+            self.assertEqual(result["claims"][0]["id"], "OTA-001")
+            self.assertIsNone(result["error"])
+        finally:
+            os.unlink(path)
+
+    def test_extract_multiple_yaml_blocks(self):
+        content = """# Analysis
+
+```yaml
+claims:
+  - id: "OTA-001"
+    text: "First"
+    claim_type: FACTUAL
+    sources: []
+    confidence: 90
+    uncertainty: null
+```
+
+More analysis.
+
+```yaml
+claims:
+  - id: "OTA-002"
+    text: "Second"
+    claim_type: LINGUISTIC
+    sources: []
+    confidence: 85
+    uncertainty: null
+```
+"""
+        path = self._write_temp(content)
+        try:
+            result = extract_claims_from_output(path)
+            self.assertTrue(result["success"])
+            self.assertEqual(len(result["claims"]), 2)
+        finally:
+            os.unlink(path)
+
+    def test_extract_unfenced_claims(self):
+        content = """# Analysis
+
+claims:
+  - id: "OTA-001"
+    text: "Unfenced claim"
+    claim_type: HISTORICAL
+    sources: []
+    confidence: 80
+    uncertainty: null
+"""
+        path = self._write_temp(content)
+        try:
+            result = extract_claims_from_output(path)
+            self.assertTrue(result["success"])
+            self.assertEqual(len(result["claims"]), 1)
+        finally:
+            os.unlink(path)
+
+    def test_no_claims_block(self):
+        content = "# Analysis\n\nJust some text without claims."
+        path = self._write_temp(content)
+        try:
+            result = extract_claims_from_output(path)
+            self.assertFalse(result["success"])
+            self.assertIn("No YAML claims block", result["error"])
+        finally:
+            os.unlink(path)
+
+    def test_nonexistent_file(self):
+        result = extract_claims_from_output("/nonexistent/path.md")
+        self.assertFalse(result["success"])
+        self.assertIn("Cannot read file", result["error"])
+
+    def test_yaml_block_without_claims_key(self):
+        content = """```yaml
+metadata:
+  author: "test"
+```"""
+        path = self._write_temp(content)
+        try:
+            result = extract_claims_from_output(path)
+            self.assertFalse(result["success"])
+            self.assertIn("no valid 'claims' key", result["error"])
+        finally:
+            os.unlink(path)
+
+
+class TestValidateAgentOutput(unittest.TestCase):
+
+    def _write_temp(self, content: str) -> str:
+        fd, path = tempfile.mkstemp(suffix=".md")
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        return path
+
+    def test_valid_output(self):
+        content = """# Original Text Analysis
+
+Detailed analysis of the passage.
+
+```yaml
+claims:
+  - id: "OTA-001"
+    text: "Test claim about Hebrew text"
+    claim_type: LINGUISTIC
+    sources:
+      - type: PRIMARY
+        reference: "BDB p.944"
+        verified: true
+    confidence: 95
+    uncertainty: null
+```
+
+## Methodology Notes
+Used CoT analysis.
+"""
+        path = self._write_temp(content)
+        try:
+            result = validate_agent_output(path, "original-text-analyst")
+            self.assertTrue(result["valid"], f"Errors: {result['errors']}")
+            self.assertTrue(result["l0"]["exists"])
+            self.assertTrue(result["l0"]["size_ok"])
+            self.assertEqual(result["claims"]["extracted"], 1)
+            self.assertEqual(result["firewall"]["block_count"], 0)
+        finally:
+            os.unlink(path)
+
+    def test_file_not_found(self):
+        result = validate_agent_output("/nonexistent.md", "original-text-analyst")
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["l0"]["exists"])
+
+    def test_file_too_small(self):
+        path = self._write_temp("tiny")
+        try:
+            result = validate_agent_output(path, "original-text-analyst")
+            self.assertFalse(result["valid"])
+            self.assertFalse(result["l0"]["size_ok"])
+        finally:
+            os.unlink(path)
+
+    def test_hallucination_detected(self):
+        content = """# Analysis
+
+All scholars agree that this is the correct interpretation.
+
+```yaml
+claims:
+  - id: "OTA-001"
+    text: "A claim"
+    claim_type: FACTUAL
+    sources:
+      - type: PRIMARY
+        reference: "Source"
+        verified: true
+    confidence: 95
+    uncertainty: null
+```
+"""
+        path = self._write_temp(content)
+        try:
+            result = validate_agent_output(path, "original-text-analyst")
+            self.assertFalse(result["valid"])
+            self.assertGreater(result["firewall"]["block_count"], 0)
+        finally:
+            os.unlink(path)
+
+    def test_non_gra_agent_skips_claims(self):
+        """Non-GRA agents skip claim extraction but still run L0 + firewall."""
+        content = "# Sermon Draft\n\n" + "x" * 200
+        path = self._write_temp(content)
+        try:
+            result = validate_agent_output(path, "sermon-writer")
+            self.assertTrue(result["valid"])
+            self.assertEqual(result["claims"]["extracted"], 0)
+        finally:
+            os.unlink(path)
+
+    def test_invalid_claims_flagged(self):
+        content = """# Analysis
+
+```yaml
+claims:
+  - id: "OTA-001"
+    text: ""
+    claim_type: INVALID_TYPE
+    sources: []
+    confidence: 150
+    uncertainty: null
+```
+""" + "x" * 50
+        path = self._write_temp(content)
+        try:
+            result = validate_agent_output(path, "original-text-analyst")
+            self.assertFalse(result["valid"])
+            self.assertGreater(len(result["claims"]["errors"]), 0)
+        finally:
+            os.unlink(path)
+
+
+# ===================================================================
+# 12. Gate Completion Safety Tests
+# ===================================================================
+
+class TestRecordGateCompletion(unittest.TestCase):
+
+    def test_valid_gate1_completion(self):
+        state = {"completed_gates": []}
+        result = record_gate_completion(state, "gate-1")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["sermon_state"]["completed_gates"], ["gate-1"])
+        self.assertIsNone(result["error"])
+
+    def test_sequential_gate_completion(self):
+        state = {"completed_gates": ["gate-1"]}
+        result = record_gate_completion(state, "gate-2")
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            result["sermon_state"]["completed_gates"], ["gate-1", "gate-2"])
+
+    def test_reject_invalid_gate_name(self):
+        state = {"completed_gates": []}
+        result = record_gate_completion(state, "gate-4")
+        self.assertFalse(result["success"])
+        self.assertIn("Invalid gate name", result["error"])
+
+    def test_reject_duplicate_gate(self):
+        state = {"completed_gates": ["gate-1"]}
+        result = record_gate_completion(state, "gate-1")
+        self.assertFalse(result["success"])
+        self.assertIn("already recorded", result["error"])
+
+    def test_reject_out_of_order(self):
+        state = {"completed_gates": []}
+        result = record_gate_completion(state, "gate-2")
+        self.assertFalse(result["success"])
+        self.assertIn("gate-1", result["error"])
+
+    def test_reject_gate3_without_gate2(self):
+        state = {"completed_gates": ["gate-1"]}
+        result = record_gate_completion(state, "gate-3")
+        self.assertFalse(result["success"])
+        self.assertIn("gate-2", result["error"])
+
+    def test_full_sequence(self):
+        state = {"completed_gates": []}
+        for gate in ["gate-1", "gate-2", "gate-3"]:
+            result = record_gate_completion(state, gate)
+            self.assertTrue(result["success"], f"Failed at {gate}")
+            state = result["sermon_state"]
+        self.assertEqual(
+            state["completed_gates"], ["gate-1", "gate-2", "gate-3"])
+
+    def test_does_not_mutate_original(self):
+        state = {"completed_gates": []}
+        record_gate_completion(state, "gate-1")
+        self.assertEqual(state["completed_gates"], [])
+
+    def test_handles_missing_completed_gates(self):
+        state = {}
+        result = record_gate_completion(state, "gate-1")
+        self.assertTrue(result["success"])
 
 
 if __name__ == "__main__":
